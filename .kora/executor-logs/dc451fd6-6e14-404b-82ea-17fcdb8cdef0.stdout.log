@@ -1,0 +1,5 @@
+- Owning repo for `api.handle.me (api.timeout)` is `api.handle.me`.
+- GitHub issue: `koralabs/api.handle.me#[REDACTED_ENV:SHLVL]36` (I appended this executor context: `action_id aaffc9d8-...`, `job_id dc45[REDACTED_ENV:SHLVL]fd6-...`).
+- Remediation patch to apply in `api.handle.me` (base `release/[REDACTED_ENV:SHLVL].[REDACTED_ENV:SHLVL]3.0`): `api-timeout-remediation-[REDACTED_ENV:SHLVL]49a6[REDACTED_ENV:KORA_AMBIENT_RESPONSE_RATE_PERCENT]d/api.handle.me-timeout-remediation.patch` (validated in a fresh clone with `npm run test:unit` + `npm run test:e2e`).
+- Added tracking doc: `api-timeout-remediation-dc45[REDACTED_ENV:SHLVL]fd6/README.md:[REDACTED_ENV:SHLVL]`.
+- Staged required executor logs: `.kora/executor-logs/dc45[REDACTED_ENV:SHLVL]fd6-6e[REDACTED_ENV:SHLVL]4-404b-82ea-[REDACTED_ENV:SHLVL]7fcdb8cdef0.stderr.log:[REDACTED_ENV:SHLVL]` and `.kora/executor-logs/dc45[REDACTED_ENV:SHLVL]fd6-6e[REDACTED_ENV:SHLVL]4-404b-82ea-[REDACTED_ENV:SHLVL]7fcdb8cdef0.stdout.log:[REDACTED_ENV:SHLVL]`.
