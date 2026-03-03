@@ -1,0 +1,12 @@
+- Owning repo for the alert is `api.handle.me` (matches incident `application=api.handle.me`).
+- Tracking issue already exists: `koralabs/api.handle.me#[REDACTED_ENV:SHLVL]36` (title: `api.timeout alert: timeout exceeded`).
+
+- Added a ready-to-apply remediation patch + instructions into this working tree:
+  - `api-timeout-remediation-[REDACTED_ENV:SHLVL]49a6[REDACTED_ENV:KORA_AMBIENT_RESPONSE_RATE_PERCENT]d/api.handle.me-timeout-remediation.patch`
+  - `api-timeout-remediation-[REDACTED_ENV:SHLVL]49a6[REDACTED_ENV:KORA_AMBIENT_RESPONSE_RATE_PERCENT]d/README.md:[REDACTED_ENV:SHLVL]`
+
+- Kept executor logs in-branch (as required):
+  - `.kora/executor-logs/[REDACTED_ENV:SHLVL]49a6[REDACTED_ENV:KORA_AMBIENT_RESPONSE_RATE_PERCENT]d-a7ab-4a[REDACTED_ENV:SHLVL]9-aacf-afd849a37a56.stderr.log`
+  - `.kora/executor-logs/[REDACTED_ENV:SHLVL]49a6[REDACTED_ENV:KORA_AMBIENT_RESPONSE_RATE_PERCENT]d-a7ab-4a[REDACTED_ENV:SHLVL]9-aacf-afd849a37a56.stdout.log`
+
+- Validation (performed in a writable clone at `/tmp/api-handle-me-[REDACTED_ENV:SHLVL]49a6[REDACTED_ENV:KORA_AMBIENT_RESPONSE_RATE_PERCENT]d`): `npm run test:unit` and `npm run test:e2e` both passed.
