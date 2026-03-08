@@ -1,0 +1,392 @@
+diff --git a/lambdas/scanner.test.ts b/lambdas/scanner.test.ts
+index 92598e2..9d0102e 100644
+--- a/lambdas/scanner.test.ts
++++ b/lambdas/scanner.test.ts
+@@ -154,10 +154,19 @@ const setup = ({ whitelistedApiKeys = 'allowed-key' }: { whitelistedApiKeys?: st
+         assetLabel: null
+     }));
+ 
++    const originalIsLocal = process.env.IS_LOCAL;
++    process.env.IS_LOCAL = 'true';
++    const scannerModule = loadScannerModule();
++    if (originalIsLocal === undefined) {
++        delete process.env.IS_LOCAL;
++    } else {
++        process.env.IS_LOCAL = originalIsLocal;
++    }
++
+     return {
+         handlesRepo,
+         pipelineResponses,
+-        scannerModule: loadScannerModule(),
++        scannerModule,
+         store
+     };
+ };
+@@ -633,16 +642,19 @@ describe('Scanner lambda unit tests', () => {
+     });
+ 
+     it('scan logs when there are no new blocks to process', async () => {
++        const logSpy = jest.spyOn(console, 'log').mockImplementation(() => undefined);
++        const infoSpy = jest.spyOn(console, 'info').mockImplementation(() => undefined);
+         const { handlesRepo, scannerModule } = setup();
+         handlesRepo.getMetrics.mockReturnValue({ currentBlockHash: 'start_hash', lockLambdas: LockedLambdaReason.UNLOCKED });
+         mockedHelpers.fetchPaginatedResults.mockResolvedValue([] as never);
+ 
+-        const logSpy = jest.spyOn(console, 'log').mockImplementation(() => undefined);
+         try {
+             await expect(scannerModule.Internal.scan()).resolves.toBeUndefined();
+-            expect(logSpy.mock.calls.some(([entry]) => `${entry}`.includes('No new blocks to process from start_hash'))).toBe(true);
++            const entries = [...logSpy.mock.calls, ...infoSpy.mock.calls].map(([entry]) => entry as any);
++            expect(entries.some((entry) => `${entry?.message ?? entry}`.includes('No new blocks to process from start_hash'))).toBe(true);
+         } finally {
+             logSpy.mockRestore();
++            infoSpy.mockRestore();
+         }
+ 
+         const txInfoCalls = mockedHelpers.fetchKoios.mock.calls.filter((call) => call[0] === 'tx_info');
+@@ -838,6 +850,10 @@ describe('Scanner lambda unit tests', () => {
+     });
+ 
+     it('retries tx_info on UND_ERR_SOCKET terminated errors and logs troubleshooting curl context', async () => {
++        const logSpy = jest.spyOn(console, 'log').mockImplementation(() => undefined);
++        const infoSpy = jest.spyOn(console, 'info').mockImplementation(() => undefined);
++        const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
++        const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => undefined);
+         const { handlesRepo, scannerModule } = setup();
+         handlesRepo.getMetrics.mockReturnValue({ currentBlockHash: 'start_hash', lockLambdas: LockedLambdaReason.UNLOCKED });
+         mockedHelpers.fetchPaginatedResults.mockResolvedValue([{ hash: 'block_newer', slot: 101, confirmations: 5 }] as never);
+@@ -859,21 +875,18 @@ describe('Scanner lambda unit tests', () => {
+         });
+         mockedHelpers.buildUTxOsFromKoiosTxs.mockReturnValue([] as never);
+ 
+-        const logSpy = jest.spyOn(console, 'log').mockImplementation(() => undefined);
+-        const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+-        const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => undefined);
+         try {
+             await expect(scannerModule.Internal.scan()).resolves.toBeUndefined();
+             const txInfoCalls = mockedHelpers.fetchKoios.mock.calls.filter((call) => call[0] === 'tx_info');
+             expect(txInfoCalls).toHaveLength(2);
+-            const logEntries = [...logSpy.mock.calls, ...warnSpy.mock.calls, ...errorSpy.mock.calls].map(([entry]) => `${entry}`);
+-            expect(
+-                logEntries.some((entry) => entry.includes('scannerLambda.koiosTxInfo.requestFailed'))
+-            ).toBe(true);
+-            expect(logEntries.some((entry) => entry.includes('UND_ERR_SOCKET'))).toBe(true);
+-            expect(logEntries.some((entry) => entry.includes('curl -v --http1.1'))).toBe(true);
++            const entries = [...logSpy.mock.calls, ...infoSpy.mock.calls, ...warnSpy.mock.calls, ...errorSpy.mock.calls].map(([entry]) => entry as any);
++            const entryText = (entry: any) => `${entry?.message ?? (typeof entry === 'string' ? entry : JSON.stringify(entry))}`;
++            expect(entries.some((entry) => entryText(entry).includes('scannerLambda.koiosTxInfo.requestFailed'))).toBe(true);
++            expect(entries.some((entry) => entryText(entry).includes('UND_ERR_SOCKET'))).toBe(true);
++            expect(entries.some((entry) => entryText(entry).includes('curl -v --http1.1'))).toBe(true);
+         } finally {
+             logSpy.mockRestore();
++            infoSpy.mockRestore();
+             warnSpy.mockRestore();
+             errorSpy.mockRestore();
+         }
+@@ -910,6 +923,34 @@ describe('Scanner lambda unit tests', () => {
+         expect(txInfoCalls).toHaveLength(2);
+     });
+ 
++    it('retries tx_info on AbortError timeouts from Koios', async () => {
++        const { handlesRepo, scannerModule } = setup();
++        handlesRepo.getMetrics.mockReturnValue({ currentBlockHash: 'start_hash', lockLambdas: LockedLambdaReason.UNLOCKED });
++        mockedHelpers.fetchPaginatedResults.mockResolvedValue([{ hash: 'block_newer', slot: 101, confirmations: 5 }] as never);
++
++        let txInfoAttempts = 0;
++        mockedHelpers.fetchKoios.mockImplementation(async (path: string, _method?: string, body?: string) => {
++            if (path === 'block_txs') return [{ tx_hash: 'tx_a' }] as never;
++            if (path === 'tx_info') {
++                txInfoAttempts++;
++                if (txInfoAttempts === 1) {
++                    const error: any = new Error('This operation was aborted');
++                    error.name = 'AbortError';
++                    throw error;
++                }
++                const parsedBody = JSON.parse(body ?? '{}');
++                return (parsedBody._tx_hashes ?? []).map((txHash: string) => ({ tx_hash: txHash, block_hash: 'block_newer', inputs: [] })) as never;
++            }
++            return [] as never;
++        });
++        mockedHelpers.buildUTxOsFromKoiosTxs.mockReturnValue([] as never);
++
++        await expect(scannerModule.Internal.scan()).resolves.toBeUndefined();
++
++        const txInfoCalls = mockedHelpers.fetchKoios.mock.calls.filter((call) => call[0] === 'tx_info');
++        expect(txInfoCalls).toHaveLength(2);
++    });
++
+     it('retries tx_info on 429 response errors from Koios', async () => {
+         const { handlesRepo, scannerModule } = setup();
+         handlesRepo.getMetrics.mockReturnValue({ currentBlockHash: 'start_hash', lockLambdas: LockedLambdaReason.UNLOCKED });
+@@ -1369,6 +1410,9 @@ describe('Scanner lambda unit tests', () => {
+     });
+ 
+     it('splits tx_info batches after retries are exhausted and continues scanning', async () => {
++        const logSpy = jest.spyOn(console, 'log').mockImplementation(() => undefined);
++        const infoSpy = jest.spyOn(console, 'info').mockImplementation(() => undefined);
++        const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+         const { handlesRepo, scannerModule } = setup();
+         handlesRepo.getMetrics.mockReturnValue({ currentBlockHash: 'start_hash', lockLambdas: LockedLambdaReason.UNLOCKED });
+         mockedHelpers.fetchPaginatedResults.mockResolvedValue([{ hash: 'block_newer', slot: 101, confirmations: 5 }] as never);
+@@ -1387,17 +1431,16 @@ describe('Scanner lambda unit tests', () => {
+         });
+         mockedHelpers.buildUTxOsFromKoiosTxs.mockReturnValue([] as never);
+ 
+-        const logSpy = jest.spyOn(console, 'log').mockImplementation(() => undefined);
+-        const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+         try {
+             await expect(scannerModule.Internal.scan()).resolves.toBeUndefined();
+             const txInfoCalls = mockedHelpers.fetchKoios.mock.calls.filter((call) => call[0] === 'tx_info');
+             expect(txInfoCalls.length).toBeGreaterThanOrEqual(5);
+-            expect(
+-                [...logSpy.mock.calls, ...warnSpy.mock.calls].some(([entry]) => `${entry}`.includes('"event": "scannerLambda.koiosTxInfo.splitBatch"'))
+-            ).toBe(true);
++            const entries = [...logSpy.mock.calls, ...infoSpy.mock.calls, ...warnSpy.mock.calls].map(([entry]) => entry as any);
++            const entryText = (entry: any) => `${entry?.message ?? (typeof entry === 'string' ? entry : JSON.stringify(entry))}`;
++            expect(entries.some((entry) => entry?.event === 'scannerLambda.koiosTxInfo.splitBatch' || entryText(entry).includes('scannerLambda.koiosTxInfo.splitBatch'))).toBe(true);
+         } finally {
+             logSpy.mockRestore();
++            infoSpy.mockRestore();
+             warnSpy.mockRestore();
+         }
+     }, 30_000);
+diff --git a/lambdas/scanner.ts b/lambdas/scanner.ts
+index b12e2f1..e0731ef 100644
+--- a/lambdas/scanner.ts
++++ b/lambdas/scanner.ts
+@@ -200,6 +200,7 @@ const buildFunctionUrlResponse = (statusCode: number, body: { message: string })
+ 
+ const isRetriableKoiosError = (error: any): boolean => {
+     const message = `${error?.message ?? ''} ${error?.cause?.message ?? ''}`.toLowerCase();
++    const name = `${error?.name ?? ''}`.toLowerCase();
+     const koiosResponseMessage = `${error?.koiosResponse?.message ?? error?.koiosResponse?.error ?? ''}`.toLowerCase();
+     const code = `${error?.code ?? ''}`.toLowerCase();
+     const koiosCode = `${error?.koiosResponse?.code ?? ''}`.toLowerCase();
+@@ -208,10 +209,12 @@ const isRetriableKoiosError = (error: any): boolean => {
+ 
+     if ([429, 502, 503, 504].includes(status)) return true;
+     if (koiosCode === 'pgrst003') return true;
++    if (name === 'aborterror' || name === 'timeouterror') return true;
+     if (code === 'und_err_socket' || causeCode === 'und_err_socket') return true;
+     if (message.includes('terminated')) return true;
+     if (message.includes('socket')) return true;
+     if (message.includes('econnreset')) return true;
++    if (message.includes('aborted')) return true;
+     if (message.includes('fetch failed')) return true;
+     if (message.includes('aborted')) return true;
+     if (message.includes('timed out')) return true;
+diff --git a/package.json b/package.json
+index 068fa5b..ecf459d 100644
+--- a/package.json
++++ b/package.json
+@@ -14,8 +14,8 @@
+     "readonly": "ENABLE_OGMIOS_SCANNING=false USE_LAMBDA_SCANNER=false PORT=3142 tsx -r tsconfig-paths/register -r dotenv/config express.ts",
+     "test": "npm run test:unit && npm run test:e2e",
+     "test:unit": "jest -c jest.config.ts --runInBand",
+-    "test:e2e": "chmod +x ./shell/local_valkey.sh && REDIS_HOST=127.0.0.1 REDIS_PORT=6380 ./shell/local_valkey.sh && (export NETWORK=preview REDIS_HOST=127.0.0.1 REDIS_PORT=6380; jest -c jest.e2e.config.ts --forceExit --runInBand)",
+-    "test:critical": "chmod +x ./shell/local_valkey.sh && REDIS_HOST=127.0.0.1 REDIS_PORT=6380 ./shell/local_valkey.sh && (export NETWORK=preview REDIS_HOST=127.0.0.1 REDIS_PORT=6380; jest -c jest.critical.config.ts --forceExit --runInBand)",
++    "test:e2e": "chmod +x ./shell/local_valkey.sh && REDIS_HOST=127.0.0.1 REDIS_PORT=6380 REDIS_USE_TLS=false ./shell/local_valkey.sh && (export NETWORK=preview ENABLE_DATUM_ENDPOINT=true REDIS_HOST=127.0.0.1 REDIS_PORT=6380 REDIS_USE_TLS=false; jest -c jest.e2e.config.ts --forceExit --runInBand)",
++    "test:critical": "chmod +x ./shell/local_valkey.sh && REDIS_HOST=127.0.0.1 REDIS_PORT=6380 REDIS_USE_TLS=false ./shell/local_valkey.sh && (export NETWORK=preview ENABLE_DATUM_ENDPOINT=true REDIS_HOST=127.0.0.1 REDIS_PORT=6380 REDIS_USE_TLS=false; jest -c jest.critical.config.ts --forceExit --runInBand)",
+     "test:container": "bash ./shell/test-container.sh",
+     "build:lambda": "npm run copy-dist-files && (cd dist && npm install) && npm exec -c 'rollup -c rollup.lambda.config.js'",
+     "build:docker": "npm run build:production && docker build -t koralabs/handles-api .",
+diff --git a/services/minting.service.test.ts b/services/minting.service.test.ts
+index 87b276d..f9db393 100644
+--- a/services/minting.service.test.ts
++++ b/services/minting.service.test.ts
+@@ -25,20 +25,27 @@ describe('minting.service tests', () => {
+             send_address: 'addr_test1xyz'
+         });
+ 
+-        expect(fetchMock).toHaveBeenCalledWith(`${MINTING_SERVICE_URL}/mint-my-subhandle`, {
+-            method: 'POST',
+-            headers: {
+-                'Content-Type': 'application/json'
+-            },
+-            body: JSON.stringify({
+-                handle: 'sub@root',
+-                txHash: 'tx_123',
+-                clientId: 'client-id',
+-                accessToken: 'token-abc',
+-                subHandleType: 'virtual',
+-                sendAddress: 'addr_test1xyz'
++        expect(fetchMock).toHaveBeenCalledWith(
++            `${MINTING_SERVICE_URL}/mint-my-subhandle`,
++            expect.objectContaining({
++                method: 'POST',
++                headers: {
++                    'Content-Type': 'application/json'
++                },
++                body: JSON.stringify({
++                    handle: 'sub@root',
++                    txHash: 'tx_123',
++                    clientId: 'client-id',
++                    accessToken: 'token-abc',
++                    subHandleType: 'virtual',
++                    sendAddress: 'addr_test1xyz'
++                })
+             })
+-        });
++        );
++        const [, options] = fetchMock.mock.calls[0] ?? [];
++        if ((globalThis as any).AbortSignal?.timeout) {
++            expect(options?.signal).toBeDefined();
++        }
+         expect(result).toEqual({
+             status: 200,
+             result: { success: true }
+diff --git a/services/minting.service.ts b/services/minting.service.ts
+index deb6c81..67fc0e7 100644
+--- a/services/minting.service.ts
++++ b/services/minting.service.ts
+@@ -1,4 +1,5 @@
+ import { MINTING_SERVICE_URL } from "../config/constants";
++import { getFetchTimeoutSignal } from "../utils/fetchTimeout";
+ 
+ /*********************************************
+  * Used by api.handle.me for SubHandle mints
+@@ -24,6 +25,7 @@ export const mintMySubHandle = async ({
+         headers: {
+             'Content-Type': 'application/json'
+         },
++        signal: getFetchTimeoutSignal(),
+         body: JSON.stringify({
+             handle,
+             txHash: tx_hash,
+diff --git a/stores/redis/index.test.ts b/stores/redis/index.test.ts
+index 3252568..487af87 100644
+--- a/stores/redis/index.test.ts
++++ b/stores/redis/index.test.ts
+@@ -613,7 +613,7 @@ describe('RedisHandlesStore critical path tests', () => {
+     it('repopulates indexes when scan returns deletable keys', () => {
+         const store = new RedisHandlesStore();
+         const scannedKeys = Array.from({ length: 100000 }, (_, index) => rootKey(`character:${index}`));
+-        const consoleSpy = jest.spyOn(console, 'log').mockImplementation(jest.fn());
++        const localSpy = jest.spyOn(Logger, 'local').mockImplementation(jest.fn());
+         let scanCount = 0;
+         const redisSpy = jest.spyOn(store as any, 'redisClientCall').mockImplementation((...args: any[]) => {
+             const [cmd] = args as [string];
+@@ -636,14 +636,14 @@ describe('RedisHandlesStore critical path tests', () => {
+ 
+         expect(redisSpy).toHaveBeenCalledWith('del', [rootKey(IndexNames.HOLDER_COUNT)]);
+         expect(redisSpy).toHaveBeenCalledWith('del', scannedKeys);
+-        expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('Deleted: 100,000 keys'));
++        expect(localSpy).toHaveBeenCalledWith(expect.stringContaining('Deleted: 100,000 keys'));
+     });
+ 
+     it('logs scan deletion progress when modulo threshold is crossed by key batch size', () => {
+         const store = new RedisHandlesStore();
+         const keysA = Array.from({ length: 99999 }, (_, index) => rootKey(`character:${index}`));
+         const keysB = Array.from({ length: 5 }, (_, index) => rootKey(`character:b${index}`));
+-        const consoleSpy = jest.spyOn(console, 'log').mockImplementation(jest.fn());
++        const localSpy = jest.spyOn(Logger, 'local').mockImplementation(jest.fn());
+         let scanCount = 0;
+         jest.spyOn(store as any, 'redisClientCall').mockImplementation((...args: any[]) => {
+             const [cmd] = args as [string];
+@@ -666,12 +666,12 @@ describe('RedisHandlesStore critical path tests', () => {
+             [UTxOFunctionName.UPDATE_HANDLE_INDEXES]: jest.fn()
+         } as any);
+ 
+-        expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('Deleted: 100,004 keys'));
++        expect(localSpy).toHaveBeenCalledWith(expect.stringContaining('Deleted: 100,004 keys'));
+     });
+ 
+     it('handles repopulation with no indexed UTxO slots', () => {
+         const store = new RedisHandlesStore();
+-        const consoleSpy = jest.spyOn(console, 'log').mockImplementation(jest.fn());
++        const localSpy = jest.spyOn(Logger, 'local').mockImplementation(jest.fn());
+         const updateHandleIndexes = jest.fn();
+         jest.spyOn(store as any, 'redisClientCall').mockImplementation((...args: any[]) => {
+             const [cmd] = args as [string];
+@@ -690,7 +690,7 @@ describe('RedisHandlesStore critical path tests', () => {
+         } as any);
+ 
+         expect(updateHandleIndexes).not.toHaveBeenCalled();
+-        expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('Added: 0 keys'));
++        expect(localSpy).toHaveBeenCalledWith(expect.stringContaining('Added: 0 keys'));
+     });
+ 
+     it('uses smembers when retrieving index keys without sort options', () => {
+diff --git a/utils/fetchTimeout.ts b/utils/fetchTimeout.ts
+new file mode 100644
+index 0000000..e244bb8
+--- /dev/null
++++ b/utils/fetchTimeout.ts
+@@ -0,0 +1,6 @@
++const DEFAULT_FETCH_TIMEOUT_MS = 20_000;
++
++export const getFetchTimeoutSignal = (timeoutMs = DEFAULT_FETCH_TIMEOUT_MS): AbortSignal | undefined => {
++    const timeout = (globalThis as any).AbortSignal?.timeout;
++    return typeof timeout === 'function' ? timeout(timeoutMs) : undefined;
++};
+diff --git a/utils/helpers.pagination.test.ts b/utils/helpers.pagination.test.ts
+index 8fcfefd..8ae8e77 100644
+--- a/utils/helpers.pagination.test.ts
++++ b/utils/helpers.pagination.test.ts
+@@ -22,13 +22,18 @@ describe('helpers pagination tests', () => {
+ 
+         expect(fetchMock).toHaveBeenCalledWith(
+             `https://cardano-${NETWORK.toLowerCase()}.blockfrost.io/api/v0/blocks/latest`,
+-            {
++            expect.objectContaining({
+                 headers: {
+                     project_id: 'test-key',
+                     'Content-Type': 'application/json'
+                 }
+-            }
++            })
+         );
++
++        const [, options] = fetchMock.mock.calls[0] ?? [];
++        if ((globalThis as any).AbortSignal?.timeout) {
++            expect(options?.signal).toBeDefined();
++        }
+     });
+ 
+     it('fetchPaginatedResults should return empty list on 404', async () => {
+@@ -125,6 +130,11 @@ describe('helpers pagination tests', () => {
+                 signal: expect.anything()
+             })
+         );
++
++        const [, options] = fetchMock.mock.calls[0] ?? [];
++        if ((globalThis as any).AbortSignal?.timeout) {
++            expect(options?.signal).toBeDefined();
++        }
+     });
+ 
+     it('fetchKoios should throw with status when Koios responds with non-JSON 429', async () => {
+diff --git a/utils/helpers.ts b/utils/helpers.ts
+index 518eae9..495c315 100644
+--- a/utils/helpers.ts
++++ b/utils/helpers.ts
+@@ -1,9 +1,9 @@
+ import { AssetNameLabel, delay, HANDLE_POLICIES, LogCategory, Logger, Network, NETWORK, UTxOWithTxInfo } from '@koralabs/kora-labs-common';
+ import { KoiosTxInfo } from '../interfaces/provider.interface';
+ import { getHandleNameFromAssetName } from '../services/ogmios/utils';
++import { getFetchTimeoutSignal } from './fetchTimeout';
+ 
+ export const defaultKoiosSettings = { _inputs: true, _withdrawals: false, _certs: false, _governance: false, _scripts: true, _bytecode: true, _metadata: true, _assets: true };
+-const KOIOS_REQUEST_TIMEOUT_MS = 20_000;
+ 
+ export const blockfrostApiCall = async (endpointSegment: string) => {
+     const headers = {
+@@ -12,7 +12,7 @@ export const blockfrostApiCall = async (endpointSegment: string) => {
+     };
+ 
+     const url = `https://cardano-${NETWORK.toLowerCase()}.blockfrost.io/api/v0/${endpointSegment}`;
+-    return await fetch(url, { headers });
++    return await fetch(url, { headers, signal: getFetchTimeoutSignal() });
+ };
+ 
+ export const fetchPaginatedResults = async <T>(endpointSegment: string, maxResults = Infinity): Promise<T[]> => {
+@@ -67,7 +67,7 @@ export const fetchKoios = async (path: string, method = 'GET', body?: string) =>
+             Authorization: `Bearer ${process.env.KOIOS_API_BEARER_TOKEN}`
+         },
+         body,
+-        signal: AbortSignal.timeout(KOIOS_REQUEST_TIMEOUT_MS)
++        signal: getFetchTimeoutSignal()
+     });
+ 
+     const responseText = await response.text();
