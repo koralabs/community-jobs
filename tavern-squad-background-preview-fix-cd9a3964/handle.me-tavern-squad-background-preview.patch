@@ -1,0 +1,84 @@
+diff --git a/bff/lib/partnersConfig.ts b/bff/lib/partnersConfig.ts
+index 65e49e1..339fc8e 100644
+--- a/bff/lib/partnersConfig.ts
++++ b/bff/lib/partnersConfig.ts
+@@ -477,7 +477,7 @@ export const partnersConfig: PartnerConfig = {
+                 }
+             ],
+             name: 'Tavern Squad - Backgrounds',
+-            image: 'https://pbs.twimg.com/profile_images/1639241352088100865/vO3EinJZ_400x400.jpg'
++            image: 'ipfs://bafybeicesd5prafy55k2nsmqwxwde7sooindt7pmevcbswkm4dve4jg2km'
+         },
+         {
+             policyIds: [
+diff --git a/bff/lib/partnersConfig.test.ts b/bff/lib/partnersConfig.test.ts
+new file mode 100644
+index 0000000..9ba4c5c
+--- /dev/null
++++ b/bff/lib/partnersConfig.test.ts
+@@ -0,0 +1,23 @@
++import assert from 'node:assert/strict';
++import test from 'node:test';
++import { partnersConfig } from './partnersConfig';
++
++// Feature/invariant: Tavern Squad collection tiles must use a durable preview image source so the backgrounds marketplace doesn’t show broken images.
++// Failure mode: A dead social-media CDN URL (e.g., pbs.twimg.com) returns 404 and renders as a broken tile image.
++// Negative control: If the Tavern Squad image is changed back to a pbs.twimg.com URL, this test should fail.
++
++const TAVERN_SQUAD_POLICY_ID = '2acc2e30b96733fe28e5afdae1165419d9104d6715b6947ee50e6ab0';
++
++test('Tavern Squad backgrounds collection preview uses a durable image source', () => {
++    const tavernConfig = partnersConfig.mainnet.find((item) =>
++        item.policyIds.some((policy) => policy.policyId === TAVERN_SQUAD_POLICY_ID)
++    );
++
++    assert.ok(tavernConfig, 'Expected Tavern Squad entry in partnersConfig.mainnet.');
++    assert.equal(tavernConfig.name, 'Tavern Squad - Backgrounds');
++    assert.equal(tavernConfig.image.includes('pbs.twimg.com'), false, 'Do not use pbs.twimg.com for collection images.');
++    assert.ok(
++        tavernConfig.image.startsWith('ipfs://') || tavernConfig.image.startsWith('https://koralabs-public.s3.amazonaws.com/'),
++        `Unexpected Tavern Squad collection image URL: ${tavernConfig.image}`
++    );
++});
+diff --git a/static/lib/partnersConfig.ts b/static/lib/partnersConfig.ts
+index 65e49e1..339fc8e 100644
+--- a/static/lib/partnersConfig.ts
++++ b/static/lib/partnersConfig.ts
+@@ -477,7 +477,7 @@ export const partnersConfig: PartnerConfig = {
+                 }
+             ],
+             name: 'Tavern Squad - Backgrounds',
+-            image: 'https://pbs.twimg.com/profile_images/1639241352088100865/vO3EinJZ_400x400.jpg'
++            image: 'ipfs://bafybeicesd5prafy55k2nsmqwxwde7sooindt7pmevcbswkm4dve4jg2km'
+         },
+         {
+             policyIds: [
+diff --git a/static/lib/partnersConfig.test.ts b/static/lib/partnersConfig.test.ts
+new file mode 100644
+index 0000000..b0a8f07
+--- /dev/null
++++ b/static/lib/partnersConfig.test.ts
+@@ -0,0 +1,23 @@
++import assert from 'node:assert/strict';
++import test from 'node:test';
++import { partnersConfig } from './partnersConfig';
++
++// Feature/invariant: Tavern Squad collection tiles must use a durable preview image source so the backgrounds marketplace doesn’t show broken images.
++// Failure mode: A dead social-media CDN URL (e.g., pbs.twimg.com) returns 404 and renders as a broken tile image.
++// Negative control: If the Tavern Squad image is changed back to a pbs.twimg.com URL, this test should fail.
++
++const TAVERN_SQUAD_POLICY_ID = '2acc2e30b96733fe28e5afdae1165419d9104d6715b6947ee50e6ab0';
++
++test('Tavern Squad backgrounds collection preview uses a durable image source', () => {
++    const tavernConfig = partnersConfig.mainnet.find((item) =>
++        item.policyIds.some((policy) => policy.policyId === TAVERN_SQUAD_POLICY_ID)
++    );
++
++    assert.ok(tavernConfig, 'Expected Tavern Squad entry in partnersConfig.mainnet.');
++    assert.equal(tavernConfig.name, 'Tavern Squad - Backgrounds');
++    assert.equal(tavernConfig.image.includes('pbs.twimg.com'), false, 'Do not use pbs.twimg.com for collection images.');
++    assert.ok(
++        tavernConfig.image.startsWith('ipfs://') || tavernConfig.image.startsWith('https://koralabs-public.s3.amazonaws.com/'),
++        `Unexpected Tavern Squad collection image URL: ${tavernConfig.image}`
++    );
++});
