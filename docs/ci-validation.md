@@ -12,7 +12,7 @@ The patch embeds TypeScript/application changes and tests intended for **api.han
 
 This is **artifact hygiene only**, not application lint/build/unit tests, patch applicability, handle-output chain accuracy, executor correctness or end-to-end acceptance. A green check must not be cited as coverage of the application code quoted in logs or patches.
 
-During the required-context migration, `Lint, build and unit tests` is retained solely as a temporary compatibility gate requiring the honestly named validation job to succeed. Once the new successful default context is required, the compatibility gate is removed in a follow-up PR without disabling protection.
+The prior overclaiming required context was replaced atomically only after the honestly named validation succeeded on the default branch. That migration is complete: the old compatibility gate is removed, and the required Actions identity is the honest name above. This does not introduce native/application build or unit coverage.
 
 ## Applicability boundary
 
