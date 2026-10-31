@@ -1,0 +1,6 @@
+# Exact repository-root-relative paths. No wildcards, no directory prefixes.
+# This repo is a collection of job outputs and remediation artifacts. It has no application source,
+# no build, no keys and no prompts, so nothing in it carries a behaviour that needs operator review.
+# Only the policy files protect themselves.
+.enclave
+CANONICAL_CONTRACT.md
