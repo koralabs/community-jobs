@@ -13,7 +13,9 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
-      - name: No conflict markers
-        run: '! git grep -nE ''^(<<<<<<<|>>>>>>>) '' -- . '':!*.md'''
-      - name: JSON syntax if tracked JSON exists
-        run: git ls-files '*.json' | xargs -r -n1 python3 -m json.tool > /dev/null
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Verify local test evidence (tests run locally, never in Actions)
+        run: |
+          c=$(jq -er 'select(.result == "pass") | .commit' .local-test-evidence.json) && git diff --quiet "$c" HEAD -- . ':!.local-test-evidence.json' || { echo "::error::no valid local test evidence for this commit: run adahandle-deployments/common/test-evidence.sh record locally and push the evidence commit"; exit 1; }
